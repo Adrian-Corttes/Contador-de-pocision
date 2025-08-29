@@ -22,11 +22,10 @@ function getRelativeIndex(lineText, characterPosition) {
     }
 
     const prefixLength = match[0].length;
-
     // Si el cursor está sobre el texto DESPUÉS del prefijo...
     if (characterPosition >= prefixLength) {
         // Calculamos el índice relativo (1-based).
-        return characterPosition - prefixLength + 1; // Ajustado para ser 1-based correctamente
+        return characterPosition - prefixLength;
     }
 
     // Si el cursor está sobre el prefijo, no devolvemos nada.
@@ -45,20 +44,26 @@ function activate(context) {
     // =========================================================================
 
     // --- 1. Muestra el índice en la BARRA DE ESTADO al mover el cursor con el teclado ---
+    // Creamos un elemento en la barra de estado. Lo alineamos a la derecha.
     const positionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 1000);
-    context.subscriptions.push(positionStatusBarItem);
+    context.subscriptions.push(positionStatusBarItem);// Importante para que se limpie al desactivar
 
+    // Registramos un evento que se dispara cada vez que el cursor o la selección cambian.
     const selectionChangeDisposable = vscode.window.onDidChangeTextEditorSelection(event => {
         const editor = vscode.window.activeTextEditor;
         if (editor && event.textEditor === editor) {
             const position = editor.selection.active;
             const lineText = editor.document.lineAt(position.line).text;
+            // Usamos nuestra función reutilizable para obtener el índice.
             const relativeIndex = getRelativeIndex(lineText, position.character);
 
             if (relativeIndex !== null) {
+                // Si tenemos un índice, lo mostramos en la barra de estado.
+                // Usamos un icono `$(symbol-key)` para que sea más claro.
                 positionStatusBarItem.text = `$(symbol-key) Posición: ${relativeIndex}`;
                 positionStatusBarItem.show();
             } else {
+                // Si no estamos en una posición válida, ocultamos el indicador.
                 positionStatusBarItem.hide();
             }
         }
@@ -71,11 +76,16 @@ function activate(context) {
         {
             provideHover(document, position, token) {
                 const lineText = document.lineAt(position.line).text;
+                // Usamos nuestra función reutilizable de nuevo.
                 const relativeIndex = getRelativeIndex(lineText, position.character);
 
                 if (relativeIndex !== null) {
-                    return new vscode.Hover(`Índice relativo: ${relativeIndex}`);
+                    // ¡CAMBIO IMPORTANTE!
+                    // Creamos el hover mostrando solo el número.
+                    // VS Code lo envolverá en un objeto Hover automáticamente.
+                    return new vscode.Hover(`${relativeIndex}`);
                 }
+                // Si no hay índice, no mostramos hover.
                 return null;
             }
         }
