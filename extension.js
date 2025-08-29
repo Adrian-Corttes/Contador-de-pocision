@@ -26,7 +26,7 @@ function getRelativeIndex(lineText, characterPosition) {
     // Si el cursor está sobre el texto DESPUÉS del prefijo...
     if (characterPosition >= prefixLength) {
         // Calculamos el índice relativo (1-based).
-        return characterPosition - prefixLength;
+        return characterPosition - prefixLength + 1; // Ajustado para ser 1-based correctamente
     }
 
     // Si el cursor está sobre el prefijo, no devolvemos nada.
@@ -39,63 +39,139 @@ function getRelativeIndex(lineText, characterPosition) {
 function activate(context) {
     console.log('¡Extensión "Indice Flotante" está activa!');
 
+    // =========================================================================
+    // --- INICIO: CÓDIGO ORIGINAL (Posición relativa del cursor) ---
+    // Esta sección se mantiene sin cambios.
+    // =========================================================================
+
     // --- 1. Muestra el índice en la BARRA DE ESTADO al mover el cursor con el teclado ---
+    const positionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 1000);
+    context.subscriptions.push(positionStatusBarItem);
 
-    // Creamos un elemento en la barra de estado. Lo alineamos a la derecha.
-    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 1000);
-    context.subscriptions.push(statusBarItem); // Importante para que se limpie al desactivar
-
-    // Registramos un evento que se dispara cada vez que el cursor o la selección cambian.
     const selectionChangeDisposable = vscode.window.onDidChangeTextEditorSelection(event => {
-        // Nos aseguramos de que el evento corresponda al editor de texto activo.
         const editor = vscode.window.activeTextEditor;
         if (editor && event.textEditor === editor) {
             const position = editor.selection.active;
             const lineText = editor.document.lineAt(position.line).text;
-
-            // Usamos nuestra función reutilizable para obtener el índice.
             const relativeIndex = getRelativeIndex(lineText, position.character);
 
             if (relativeIndex !== null) {
-                // Si tenemos un índice, lo mostramos en la barra de estado.
-                // Usamos un icono `$(symbol-key)` para que sea más claro.
-                statusBarItem.text = `$(symbol-key) Posición: ${relativeIndex}`;
-                statusBarItem.show();
+                positionStatusBarItem.text = `$(symbol-key) Posición: ${relativeIndex}`;
+                positionStatusBarItem.show();
             } else {
-                // Si no estamos en una posición válida, ocultamos el indicador.
-                statusBarItem.hide();
+                positionStatusBarItem.hide();
             }
         }
     });
-
     context.subscriptions.push(selectionChangeDisposable);
 
-
     // --- 2. Muestra el índice en un HOVER al pasar el mouse ---
-
     const hoverProvider = vscode.languages.registerHoverProvider(
-        { scheme: 'file' }, // Se aplica a cualquier archivo
+        { scheme: 'file' },
         {
             provideHover(document, position, token) {
                 const lineText = document.lineAt(position.line).text;
-
-                // Usamos nuestra función reutilizable de nuevo.
                 const relativeIndex = getRelativeIndex(lineText, position.character);
 
                 if (relativeIndex !== null) {
-                    // ¡CAMBIO IMPORTANTE!
-                    // Creamos el hover mostrando solo el número.
-                    // VS Code lo envolverá en un objeto Hover automáticamente.
-                    return new vscode.Hover(`${relativeIndex}`);
+                    return new vscode.Hover(`Índice relativo: ${relativeIndex}`);
                 }
-
-                // Si no hay índice, no mostramos hover.
                 return null;
             }
         }
     );
-
     context.subscriptions.push(hoverProvider);
+
+    // =========================================================================
+    // --- FIN: CÓDIGO ORIGINAL ---
+    // =========================================================================
+
+
+    // =========================================================================
+    // --- INICIO: NUEVA FUNCIONALIDAD (Reemplazo de Números por Letras) ---
+    // =========================================================================
+
+    let isReplacementModeActive = false; // Estado para saber si el modo está activo
+    let isProgrammaticChange = false; // Previene bucles infinitos al editar el documento
+
+    // Mapa de reemplazos de número a letra
+    const replacementMap = {
+        '1': 'A', '2': 'B', '3': 'C',
+        '4': 'D', '5': 'E', '6': 'F',
+        '7': 'G', '8': 'H', '0': 'X'
+    };
+
+    // --- 3. Crea el BarItem para activar/desactivar el modo ---
+    const toggleModeBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 900);
+    toggleModeBarItem.command = 'extension.toggleReplacementMode'; // Comando que se ejecuta al hacer clic
+
+    function updateStatusBarItem() {
+        if (isReplacementModeActive) {
+            toggleModeBarItem.text = `$(keyboard) NUM → ABC: ON`;
+            toggleModeBarItem.tooltip = 'Modo de reemplazo de números activado. Haz clic para desactivar.';
+            toggleModeBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        } else {
+            toggleModeBarItem.text = `$(keyboard) NUM → ABC: OFF`;
+            toggleModeBarItem.tooltip = 'Modo de reemplazo de números desactivado. Haz clic para activar.';
+            // Quita el color de fondo cuando está apagado
+            toggleModeBarItem.backgroundColor = undefined;
+        }
+    }
+
+    updateStatusBarItem(); // Llama a la función para establecer el estado inicial
+    toggleModeBarItem.show();
+    context.subscriptions.push(toggleModeBarItem);
+
+    // --- 4. Registra el comando para cambiar el estado ---
+    const toggleCommand = vscode.commands.registerCommand('extension.toggleReplacementMode', () => {
+        isReplacementModeActive = !isReplacementModeActive; // Invierte el estado
+        updateStatusBarItem(); // Actualiza el texto del botón
+        vscode.window.showInformationMessage(`Modo de reemplazo de números: ${isReplacementModeActive ? 'Activado' : 'Desactivado'}`);
+    });
+    context.subscriptions.push(toggleCommand);
+
+    // --- 5. Escucha los cambios en el documento para hacer el reemplazo ---
+    const textChangeDisposable = vscode.workspace.onDidChangeTextDocument(event => {
+        // Si el modo no está activo, o el cambio fue hecho por la propia extensión, no hagas nada.
+        if (!isReplacementModeActive || isProgrammaticChange) {
+            return;
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        // Asegúrate de que el cambio sea en el editor activo
+        if (!editor || event.document !== editor.document) {
+            return;
+        }
+
+        // Procesa cada cambio individualmente
+        event.contentChanges.forEach(change => {
+            const insertedText = change.text;
+            // Solo nos interesan inserciones de un solo carácter que sea un número a reemplazar
+            if (insertedText.length === 1 && replacementMap[insertedText]) {
+                const replacementLetter = replacementMap[insertedText];
+
+                // Calcula el rango exacto del número que se acaba de insertar
+                const startPosition = change.range.start;
+                const endPosition = startPosition.translate(0, 1);
+                const replacementRange = new vscode.Range(startPosition, endPosition);
+
+                // Marca que el siguiente cambio será programático para evitar bucles
+                isProgrammaticChange = true;
+                // Edita el documento para reemplazar el número por la letra
+                editor.edit(editBuilder => {
+                    editBuilder.replace(replacementRange, replacementLetter);
+                }).then(() => {
+                    // Una vez que la edición se completa, resetea la marca
+                    isProgrammaticChange = false;
+                });
+            }
+        });
+    });
+    context.subscriptions.push(textChangeDisposable);
+
+    // =========================================================================
+    // --- FIN: NUEVA FUNCIONALIDAD ---
+    // =========================================================================
 }
 
 function deactivate() {
